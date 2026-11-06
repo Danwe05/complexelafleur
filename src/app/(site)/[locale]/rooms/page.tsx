@@ -4,9 +4,10 @@ import type { Metadata } from "next";
 import { Icon } from "@/components/Icon";
 import { Photo } from "@/components/Photo";
 import { dictionaries, isLocale } from "@/lib/i18n/dictionaries";
-import { getRooms } from "@/lib/data";
+import { getRooms, getSettings } from "@/lib/data";
+import { waBookingMessage, waHref } from "@/lib/contact";
 import { formatFcfa } from "@/lib/format";
-import { amenityIcon, guestRange, roomPhotos } from "@/lib/rooms-ui";
+import { amenityIcon, amenityLabel, guestRange, roomPhotos } from "@/lib/rooms-ui";
 
 /* Même palette et même famille de cartes que la page d'accueil */
 const wrap = "mx-auto w-full max-w-[1280px] px-5 lg:px-8";
@@ -22,7 +23,8 @@ export default async function RoomsPage({ params }: { params: Promise<{ locale: 
   const { locale } = await params;
   if (!isLocale(locale)) notFound();
   const t = dictionaries[locale];
-  const rooms = await getRooms();
+  const [rooms, s] = await Promise.all([getRooms(), getSettings()]);
+  const waNumber = s.whatsapp || s.phone2;
 
   return (
     <>
@@ -60,7 +62,9 @@ export default async function RoomsPage({ params }: { params: Promise<{ locale: 
               <div className="flex flex-1 flex-col px-3 pb-3 pt-5">
                 <div className="flex items-start justify-between gap-3">
                   <h2 id={`${room.slug}-title`} className={`m-0 ${serif} text-2xl font-bold leading-tight text-[#0f3b2d]`}>
-                    {name}
+                    <Link href={`/${locale}/rooms/${room.slug}`} className={`text-inherit no-underline hover:underline ${focus}`}>
+                      {name}
+                    </Link>
                   </h2>
                   <span className="mt-1 inline-flex shrink-0 items-center gap-1 text-xs font-medium text-[#8a620b]">
                     <Icon name="user" size={14} /> {min}-{max}
@@ -79,7 +83,7 @@ export default async function RoomsPage({ params }: { params: Promise<{ locale: 
                         className="inline-flex items-center gap-1.5 rounded-lg bg-[#f4f6f2] px-2.5 py-1.5 text-xs text-[#1d2b25]"
                       >
                         <Icon name={amenityIcon(a)} size={13} className="text-[#a8780f]" />
-                        {a}
+                        {amenityLabel(a, locale)}
                       </li>
                     ))}
                   </ul>
@@ -88,11 +92,32 @@ export default async function RoomsPage({ params }: { params: Promise<{ locale: 
                 <div aria-hidden="true" className="min-h-6 flex-1" />
 
                 <Link
-                  href={`/${locale}/book?room=${room.slug}`}
-                  className={`inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0f3b2d] px-5 py-3 text-sm font-medium text-white no-underline transition-colors group-hover:bg-[#a8780f] hover:bg-[#8a620b] ${focus}`}
+                  href={`/${locale}/rooms/${room.slug}`}
+                  className={`mb-3 inline-flex min-h-9 items-center gap-1.5 self-start text-[13px] font-semibold text-[#8a620b] no-underline hover:underline ${focus}`}
                 >
-                  {t.rooms.book} <Icon name="arrow" size={15} />
+                  {t.rooms.details} <Icon name="arrow" size={14} />
                 </Link>
+                {/* Réserver : WhatsApp en premier (chambre pré-remplie), réservation en ligne en second */}
+                <div className="flex flex-col gap-2">
+                  {waNumber && (
+                    <a
+                      href={waHref(waNumber, waBookingMessage(locale, { room: name }))}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`${t.rooms.waBook} : ${name}`}
+                      className={`inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border-2 border-[#0d7a4f] bg-white px-5 py-3 text-sm font-semibold text-[#0d7a4f] no-underline transition-colors hover:bg-[#0d7a4f] hover:text-white ${focus}`}
+                    >
+                      <Icon name="whatsapp" size={18} /> {t.rooms.waBook}
+                    </a>
+                  )}
+                  <Link
+                    href={`/${locale}/book?room=${room.slug}`}
+                    aria-label={`${t.rooms.bookOnline} : ${name}`}
+                    className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border-2 border-[#0f3b2d] px-5 py-2.5 text-sm font-semibold text-[#0f3b2d] no-underline transition-colors hover:bg-[#eef2ec] ${focus}`}
+                  >
+                    {t.rooms.bookOnline} <Icon name="arrow" size={15} />
+                  </Link>
+                </div>
               </div>
             </article>
           );

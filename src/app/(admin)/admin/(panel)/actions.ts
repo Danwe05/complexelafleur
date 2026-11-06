@@ -1,59 +1,84 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { serviceClient } from "@/lib/supabase/admin";
+import { requireAdmin } from "@/lib/admin-auth";
 import { getSettings } from "@/lib/data";
 import { notifyGuestDecision } from "@/lib/notify";
-import type { Booking } from "@/lib/types";
+import { sortAmenities } from "@/lib/amenities";
+import type { Booking, BookingStatus } from "@/lib/types";
+
+// IMPORTANT : chaque action commence par requireAdmin(). Une server action est
+// un point d'entrée public (appelable par POST) : le layout admin ne la protège pas.
+
+const str = (v: FormDataEntryValue | null) => (typeof v === "string" ? v : "");
+const int = (v: FormDataEntryValue | null, fallback: number) => {
+  const n = Number(str(v));
+  return Number.isFinite(n) && str(v) !== "" ? Math.round(n) : fallback;
+};
 
 // ─── Booking decisions ────────────────────────────────────────────────────────
 
 type Decision = "confirmed" | "declined" | "cancelled";
 
-export async function decideBooking(formData: FormData) {
-  const id = formData.get("id") as string | null;
-  const decision = formData.get("decision") as Decision | null;
+/** Statuts de départ autorisés pour chaque décision. */
+const allowedFrom: Record<Decision, BookingStatus[]> = {
+  confirmed: ["pending", "awaiting_payment"],
+  declined: ["pending", "awaiting_payment"],
+  cancelled: ["pending", "awaiting_payment", "confirmed"],
+};
 
-  if (!id || !decision || !["confirmed", "declined", "cancelled"].includes(decision)) {
-    return;
-  }
+export async function decideBooking(formData: FormData) {
+  await requireAdmin();
+
+  const id = str(formData.get("id"));
+  const decision = str(formData.get("decision")) as Decision;
+  if (!id || !Object.hasOwn(allowedFrom, decision)) redirect("/admin?error=invalid");
 
   const db = serviceClient();
-  const now = new Date().toISOString();
+  const { data: current, error: readErr } = await db.from("bookings").select("*").eq("id", id).maybeSingle();
+  if (readErr || !current) redirect("/admin?error=not_found");
+  const before = current as Booking;
 
-  const newStatus =
-    decision === "confirmed" ? "confirmed" : decision === "cancelled" ? "cancelled" : "declined";
+  if (!allowedFrom[decision].includes(before.status)) redirect("/admin?error=state");
+
+  // Refus ou annulation d'une réservation dont l'acompte est payé : remboursement à faire.
+  // Si un paiement est encore en cours, le webhook passera en « à rembourser » à son arrivée.
+  const update: Record<string, unknown> = { status: decision, updated_at: new Date().toISOString() };
+  if (decision !== "confirmed" && before.payment_status === "paid") update.payment_status = "refund_due";
+  if (decision !== "confirmed") update.hold_expires_at = null;
 
   const { data, error } = await db
     .from("bookings")
-    .update({ status: newStatus, updated_at: now })
+    .update(update)
     .eq("id", id)
+    .eq("status", before.status) // évite d'écraser un changement fait entre-temps (webhook, autre onglet)
     .select("*")
-    .single();
+    .maybeSingle();
 
   if (error || !data) {
     console.error("decideBooking: update failed", error);
-    redirect("/admin");
+    redirect("/admin?error=state");
   }
 
   const booking = data as Booking;
 
   const [roomRes, settings] = await Promise.all([
-    db.from("rooms").select("name_fr").eq("id", booking.room_id).single(),
+    db.from("rooms").select("name_fr, name_en").eq("id", booking.room_id).single(),
     getSettings(),
   ]);
-  const roomName = roomRes.data?.name_fr ?? "";
+  const roomName = (booking.locale === "en" ? roomRes.data?.name_en : roomRes.data?.name_fr) ?? roomRes.data?.name_fr ?? "";
 
-  // Send guest email for confirmed and declined (not cancelled — that's admin-initiated).
+  // E-mail au client pour une confirmation ou un refus (pas pour une annulation faite par l'hôtel).
   if (decision === "confirmed" || decision === "declined") {
     await notifyGuestDecision(booking, roomName, settings, decision);
   }
 
-  // Redirect back with query params so the page can surface a WhatsApp follow-up banner.
-  const wa = booking.guest_phone.replace(/[^\d]/g, "");
+  // Retour avec paramètres : la page propose un message WhatsApp de suivi.
   const params = new URLSearchParams({
-    wa,
+    wa: booking.guest_phone.replace(/[^\d]/g, ""),
     ref: booking.reference,
     decision,
     room: roomName,
@@ -65,85 +90,166 @@ export async function decideBooking(formData: FormData) {
 }
 
 export async function markRefunded(formData: FormData) {
-  const id = formData.get("id") as string | null;
-  if (!id) return;
+  await requireAdmin();
+  const id = str(formData.get("id"));
+  if (!id) redirect("/admin");
 
-  const db = serviceClient();
-  const { error } = await db
+  const { error } = await serviceClient()
     .from("bookings")
     .update({ payment_status: "refunded", updated_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("payment_status", "refund_due");
 
-  if (error) console.error("markRefunded: update failed", error);
-  redirect("/admin");
+  if (error) {
+    console.error("markRefunded: update failed", error);
+    redirect("/admin?s=refund&error=save");
+  }
+  redirect("/admin?s=refund");
 }
 
-// ─── Settings ─────────────────────────────────────────────────────────────────
+// ─── Settings ───────────────────────────────────────────────────────────────
 
 export async function saveSettings(formData: FormData) {
-  const lang = (formData.get("lang") as string) || "fr";
-  const db = serviceClient();
-  await db.from("settings").upsert({
+  await requireAdmin();
+  const lang = str(formData.get("lang")) || "fr";
+  const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+  const opt = (k: string) => str(formData.get(k)).trim() || null;
+
+  const { error } = await serviceClient().from("settings").upsert({
     id: 1,
-    hotel_name: formData.get("hotel_name") as string,
-    phone: (formData.get("phone") as string) || null,
-    phone2: (formData.get("phone2") as string) || null,
-    whatsapp: (formData.get("whatsapp") as string) || null,
-    email: (formData.get("email") as string) || null,
-    manager_email: (formData.get("manager_email") as string) || null,
-    address: (formData.get("address") as string) || null,
-    maps_url: (formData.get("maps_url") as string) || null,
-    facebook_url: (formData.get("facebook_url") as string) || null,
-    instagram_url: (formData.get("instagram_url") as string) || null,
-    youtube_url: (formData.get("youtube_url") as string) || null,
-    checkin_time: (formData.get("checkin_time") as string) || "14:00",
-    checkout_time: (formData.get("checkout_time") as string) || "12:00",
-    deposit_percent: Number(formData.get("deposit_percent") ?? 0),
-    hold_hours: Number(formData.get("hold_hours") ?? 24),
+    hotel_name: str(formData.get("hotel_name")).trim() || "Complexe La Fleur - Obala",
+    phone: opt("phone"),
+    phone2: opt("phone2"),
+    phone3: opt("phone3"),
+    whatsapp: opt("whatsapp"),
+    email: opt("email"),
+    manager_email: opt("manager_email"),
+    address: opt("address"),
+    maps_url: opt("maps_url"),
+    facebook_url: opt("facebook_url"),
+    instagram_url: opt("instagram_url"),
+    youtube_url: opt("youtube_url"),
+    checkin_time: str(formData.get("checkin_time")) || "14:00",
+    checkout_time: str(formData.get("checkout_time")) || "12:00",
+    open_time: str(formData.get("open_time")) || "10:00",
+    close_time: str(formData.get("close_time")) || "19:00",
+    breakfast_start: opt("breakfast_start"),
+    breakfast_end: opt("breakfast_end"),
+    deposit_percent: clamp(int(formData.get("deposit_percent"), 30), 0, 100),
+    hold_hours: clamp(int(formData.get("hold_hours"), 2), 1, 168),
     ...(lang === "en"
-      ? { cancellation_policy_en: formData.get("cancellation_policy") as string }
-      : { cancellation_policy_fr: formData.get("cancellation_policy") as string }),
+      ? { cancellation_policy_en: str(formData.get("cancellation_policy")) }
+      : { cancellation_policy_fr: str(formData.get("cancellation_policy")) }),
   });
+  if (error) {
+    console.error("saveSettings failed", error);
+    redirect("/admin/settings?error=1");
+  }
   redirect("/admin/settings?saved=1");
 }
 
 // ─── Admin language ───────────────────────────────────────────────────────────
 
 export async function setAdminLang(formData: FormData) {
-  const lang = formData.get("lang") as string;
+  // Pas de données sensibles ici, mais on reste cohérent : réservé aux admins.
+  await requireAdmin();
+  const lang = str(formData.get("lang"));
   if (lang === "fr" || lang === "en") {
     const jar = await cookies();
-    jar.set("admin_lang", lang, { path: "/", httpOnly: true, maxAge: 60 * 60 * 24 * 365 });
+    jar.set("admin_lang", lang, { path: "/", httpOnly: true, sameSite: "lax", maxAge: 60 * 60 * 24 * 365 });
   }
   redirect("/admin");
 }
 
-// ─── Rooms ────────────────────────────────────────────────────────────────────
+// ─── Rooms ────────────────────────────────────────────────────────────────
 
-export async function saveRoom(formData: FormData) {
-  const id = formData.get("id") as string | null;
-  const lang = (formData.get("lang") as string) || "fr";
-  const name = (formData.get("name") as string).trim();
-  const description = ((formData.get("description") as string) || "").trim();
-  const imagesKeep = formData.getAll("images_keep") as string[];
-  const imageUrlManual = (formData.get("image_url_manual") as string) || "";
+const PHOTO_BUCKET = "room-photos";
+const PHOTO_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
 
-  // Build the images array: kept URLs first, then any manually entered URL.
-  const images: string[] = [...imagesKeep.filter(Boolean)];
-  if (imageUrlManual && !images.includes(imageUrlManual)) images.push(imageUrlManual);
+export type UploadTicket = { path: string; token: string; publicUrl: string };
+
+/**
+ * Prépare l'envoi des photos : renvoie une URL signée par fichier.
+ * Le navigateur envoie ensuite les fichiers directement à Supabase Storage,
+ * ce qui évite la limite de 4,5 Mo par requête des fonctions Vercel.
+ */
+export async function createRoomPhotoUploads(
+  files: { type: string; size: number }[],
+): Promise<{ tickets?: UploadTicket[]; error?: string }> {
+  await requireAdmin();
+  if (!Array.isArray(files) || files.length === 0) return { tickets: [] };
+  if (files.length > 20) return { error: "too_many" };
+
+  const db = serviceClient();
+  const tickets: UploadTicket[] = [];
+  for (const f of files) {
+    const ext = PHOTO_TYPES[f?.type];
+    if (!ext) return { error: "bad_type" };
+    if (!(f.size > 0 && f.size <= PHOTO_MAX_BYTES)) return { error: "too_big" };
+    const path = `rooms/${randomUUID()}.${ext}`;
+    const { data, error } = await db.storage.from(PHOTO_BUCKET).createSignedUploadUrl(path);
+    if (error || !data) {
+      console.error("createSignedUploadUrl failed", error);
+      return { error: "storage" };
+    }
+    const { data: pub } = db.storage.from(PHOTO_BUCKET).getPublicUrl(path);
+    tickets.push({ path, token: data.token, publicUrl: pub.publicUrl });
+  }
+  return { tickets };
+}
+
+function slugify(s: string) {
+  return (
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "chambre"
+  );
+}
+
+async function uniqueSlug(base: string) {
+  const { data } = await serviceClient().from("rooms").select("slug").like("slug", `${base}%`);
+  const taken = new Set((data ?? []).map((r) => r.slug as string));
+  if (!taken.has(base)) return base;
+  for (let i = 2; ; i++) if (!taken.has(`${base}-${i}`)) return `${base}-${i}`;
+}
+
+/** Enregistre une chambre. Renvoie { error } en cas d'échec, sinon redirige. */
+export async function saveRoom(formData: FormData): Promise<{ error?: string } | void> {
+  await requireAdmin();
+
+  const id = str(formData.get("id"));
+  const lang = str(formData.get("lang")) || "fr";
+  const name = str(formData.get("name")).trim();
+  const description = str(formData.get("description")).trim();
+  if (!name) return { error: "name" };
+
+  // Photos : URL déjà en ligne (gardées + nouvellement envoyées), puis éventuelle URL collée.
+  const images = formData
+    .getAll("images_keep")
+    .map((v) => str(v).trim())
+    .filter((u) => /^https?:\/\//i.test(u) || u.startsWith("/"));
+  const manual = str(formData.get("image_url_manual")).trim();
+  if (manual && /^https?:\/\//i.test(manual) && !images.includes(manual)) images.push(manual);
 
   const payload: Record<string, unknown> = {
-    price_per_night: Number(formData.get("price_per_night") ?? 0),
-    capacity: Number(formData.get("capacity") ?? 1),
-    quantity: Number(formData.get("quantity") ?? 1),
-    sort_order: Number(formData.get("sort_order") ?? 0),
-    amenities: ((formData.get("amenities") as string) || "")
-      .split(",")
-      .map((a) => a.trim())
-      .filter(Boolean),
+    price_per_night: Math.max(0, int(formData.get("price_per_night"), 0)),
+    capacity: Math.max(1, int(formData.get("capacity"), 1)),
+    quantity: Math.max(1, int(formData.get("quantity"), 1)),
+    sort_order: int(formData.get("sort_order"), 0),
+    // Cases cochées (catalogue) + « Autres équipements » saisis à la main, rangés dans l'ordre du catalogue
+    amenities: sortAmenities([
+      ...formData.getAll("amenities").map((v) => str(v).trim()),
+      ...str(formData.get("amenities_other")).split(",").map((a) => a.trim()),
+    ].filter(Boolean)),
     active: formData.get("active") === "on",
     images,
     image_url: images[0] || null,
+    updated_at: new Date().toISOString(),
     ...(lang === "en"
       ? { name_en: name, description_en: description }
       : { name_fr: name, description_fr: description }),
@@ -152,65 +258,88 @@ export async function saveRoom(formData: FormData) {
   const db = serviceClient();
 
   if (id) {
-    await db.from("rooms").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", id);
-    redirect("/admin/rooms?saved=1");
+    const { error } = await db.from("rooms").update(payload).eq("id", id);
+    if (error) {
+      console.error("saveRoom update failed", error);
+      return { error: "save" };
+    }
   } else {
-    // New room: copy the name/description to both language fields so neither is empty.
+    // Nouvelle chambre : même texte dans les deux langues pour qu'aucune ne soit vide.
     payload.name_fr = payload.name_fr ?? name;
     payload.name_en = payload.name_en ?? name;
     payload.description_fr = payload.description_fr ?? description;
     payload.description_en = payload.description_en ?? description;
-    await db.from("rooms").insert(payload);
-    redirect("/admin/rooms?saved=1");
+    payload.slug = await uniqueSlug(slugify(name));
+    const { error } = await db.from("rooms").insert(payload);
+    if (error) {
+      console.error("saveRoom insert failed", error);
+      return { error: "save" };
+    }
   }
+  redirect("/admin/rooms?saved=1");
 }
 
 export async function toggleRoomActive(formData: FormData) {
-  const id = formData.get("id") as string | null;
+  await requireAdmin();
+  const id = str(formData.get("id"));
+  if (!id) redirect("/admin/rooms");
   const active = formData.get("active") === "true";
-  if (!id) return;
-  const db = serviceClient();
-  await db
+  const { error } = await serviceClient()
     .from("rooms")
     .update({ active, updated_at: new Date().toISOString() })
     .eq("id", id);
+  if (error) {
+    console.error("toggleRoomActive failed", error);
+    redirect("/admin/rooms?error=1");
+  }
   redirect("/admin/rooms");
 }
 
 export async function deleteRoom(formData: FormData) {
-  const id = formData.get("id") as string | null;
-  if (!id) return;
+  await requireAdmin();
+  const id = str(formData.get("id"));
+  if (!id) redirect("/admin/rooms");
   const db = serviceClient();
 
-  // Check if the room has any non-closed bookings; if so, hide instead of delete.
-  const { count } = await db
+  // Toute réservation (même ancienne) référence la chambre : on la masque au lieu de la supprimer,
+  // sinon la suppression échoue (clé étrangère) et l'historique serait perdu.
+  const { count, error: countErr } = await db
     .from("bookings")
     .select("id", { count: "exact", head: true })
-    .eq("room_id", id)
-    .in("status", ["pending", "awaiting_payment", "confirmed"]);
+    .eq("room_id", id);
+  if (countErr) {
+    console.error("deleteRoom count failed", countErr);
+    redirect("/admin/rooms?error=1");
+  }
 
   if (count && count > 0) {
-    await db
-      .from("rooms")
-      .update({ active: false, updated_at: new Date().toISOString() })
-      .eq("id", id);
+    const { error } = await db.from("rooms").update({ active: false, updated_at: new Date().toISOString() }).eq("id", id);
+    if (error) redirect("/admin/rooms?error=1");
     redirect("/admin/rooms?hidden=1");
-  } else {
-    await db.from("rooms").delete().eq("id", id);
-    redirect("/admin/rooms?deleted=1");
   }
+
+  const { error } = await db.from("rooms").delete().eq("id", id);
+  if (error) {
+    console.error("deleteRoom failed", error);
+    redirect("/admin/rooms?error=1");
+  }
+  redirect("/admin/rooms?deleted=1");
 }
 
-// ─── Inquiries ────────────────────────────────────────────────────────────────
+// ─── Inquiries ───────────────────────────────────────────────────────────────
 
 export async function toggleInquiry(formData: FormData) {
-  const id = formData.get("id") as string | null;
+  await requireAdmin();
+  const id = str(formData.get("id"));
+  if (!id) redirect("/admin/inquiries");
   const handled = formData.get("handled") === "true";
-  if (!id) return;
-  const db = serviceClient();
-  await db
+  const { error } = await serviceClient()
     .from("inquiries")
     .update({ handled, updated_at: new Date().toISOString() })
     .eq("id", id);
+  if (error) {
+    console.error("toggleInquiry failed", error);
+    redirect("/admin/inquiries?error=1");
+  }
   redirect("/admin/inquiries");
 }

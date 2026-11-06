@@ -3,15 +3,17 @@ import { serviceClient } from "@/lib/supabase/admin";
 import { formatDate, formatFcfa } from "@/lib/format";
 import type { Booking } from "@/lib/types";
 import { getAdminDict } from "@/lib/admin-i18n";
+import { requireAdmin } from "@/lib/admin-auth";
 import { decideBooking, markRefunded } from "./actions";
 
 const filterKeys = ["pending", "awaiting_payment", "confirmed", "refund", "closed", "all"] as const;
 
 type Row = Booking & { rooms: { name_fr: string } | null };
 
-type SearchParams = { s?: string; wa?: string; ref?: string; decision?: string; room?: string; checkin?: string; checkout?: string; locale?: string };
+type SearchParams = { error?: string; s?: string; wa?: string; ref?: string; decision?: string; room?: string; checkin?: string; checkout?: string; locale?: string };
 
 export default async function BookingsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  await requireAdmin();
   const sp = await searchParams;
   const { s, wa, ref: waRef, decision: waDecision, room: waRoom, checkin: waCheckin, checkout: waCheckout, locale: waLocale } = sp;
   const { lang, t } = await getAdminDict();
@@ -48,10 +50,10 @@ export default async function BookingsPage({ searchParams }: { searchParams: Pro
     const msg =
       guestLang === "fr"
         ? waDecision === "confirmed"
-          ? `Bonjour, votre réservation ${waRef} au Complexe La Fleur est confirmée !✅\n${waRoom ? waRoom + "\n" : ""}${dates}\nÀ bientôt !`
+          ? `Bonjour, votre réservation ${waRef} au Complexe La Fleur - Obala est confirmée !✅\n${waRoom ? waRoom + "\n" : ""}${dates}\nÀ bientôt !`
           : `Bonjour, nous sommes désolés, nous ne pouvons pas donner suite à votre réservation ${waRef} (${dates}). N'hésitez pas à nous recontacter.`
         : waDecision === "confirmed"
-          ? `Hello, your booking ${waRef} at Complexe La Fleur is confirmed! ✅\n${waRoom ? waRoom + "\n" : ""}${dates}\nSee you soon!`
+          ? `Hello, your booking ${waRef} at Complexe La Fleur - Obala is confirmed! ✅\n${waRoom ? waRoom + "\n" : ""}${dates}\nSee you soon!`
           : `Hello, we're sorry but we cannot accept your booking ${waRef} (${dates}). Please feel free to contact us again.`;
     waNotifyUrl = `https://wa.me/${wa}?text=${encodeURIComponent(msg)}`;
     waNotifyLabel = waDecision === "confirmed" ? t.waNotifyConfirmed : t.waNotifyDeclined;
@@ -75,6 +77,7 @@ export default async function BookingsPage({ searchParams }: { searchParams: Pro
         </div>
       )}
       <h1 style={{ fontSize: "2rem" }}>{t.bookings}</h1>
+      {sp.error && <p className="alert alert-error">{sp.error === "state" ? t.actionStateError : t.actionError}</p>}
       <p className="muted">
         {toValidate ? `${toValidate} ${toValidate > 1 ? t.toValidateMany : t.toValidateOne}` : t.nothingToValidate}
       </p>

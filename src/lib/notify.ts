@@ -3,18 +3,32 @@ import { Resend } from "resend";
 import type { Booking, Settings } from "./types";
 import { formatDate, formatFcfa } from "./format";
 
+// Resend n'envoie que depuis un domaine vérifié chez lui : jamais depuis gmail.com & co.
+const FREE_MAIL = /@(gmail|googlemail|yahoo|ymail|hotmail|outlook|live|icloud|aol)\./i;
+let warned = false;
+
 /** Envoi d'e-mail via Resend. Sans RESEND_API_KEY, les notifications sont simplement ignorées. */
-async function sendEmail(to: string | null | undefined, subject: string, text: string) {
+export async function sendEmail(to: string | null | undefined, subject: string, text: string) {
   const key = process.env.RESEND_API_KEY;
   if (!key || !to) return;
-  const resend = new Resend(key);
-  const { error } = await resend.emails.send({
-    from: process.env.MAIL_FROM || "Complexe La Fleur <onboarding@resend.dev>",
-    to: [to],
-    subject,
-    text,
-  });
-  if (error) console.error("sendEmail failed", error);
+  const from = process.env.MAIL_FROM || "Complexe La Fleur - Obala <onboarding@resend.dev>";
+  if (FREE_MAIL.test(from)) {
+    if (!warned) {
+      console.error(
+        `MAIL_FROM (${from}) utilise une messagerie gratuite : Resend refuse ces envois. ` +
+          "Vérifiez votre domaine dans Resend et utilisez par exemple reservations@complexelafleur.com.",
+      );
+      warned = true;
+    }
+    return;
+  }
+  // Un e-mail raté ne doit jamais faire échouer une réservation ou un paiement.
+  try {
+    const { error } = await new Resend(key).emails.send({ from, to: [to], subject, text });
+    if (error) console.error("sendEmail failed", error);
+  } catch (err) {
+    console.error("sendEmail threw", err);
+  }
 }
 
 export async function notifyGuestBookingReceived(b: Booking, roomName: string, s: Settings) {

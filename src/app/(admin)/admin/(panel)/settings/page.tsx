@@ -1,9 +1,11 @@
 import { getSettings } from "@/lib/data";
 import { getAdminDict } from "@/lib/admin-i18n";
 import { saveSettings } from "../actions";
+import { requireAdmin } from "@/lib/admin-auth";
 
-export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ saved?: string }> }) {
-  const { saved } = await searchParams;
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ saved?: string; error?: string }> }) {
+  await requireAdmin();
+  const { saved, error } = await searchParams;
   const { lang, t } = await getAdminDict();
   const s = await getSettings();
 
@@ -11,6 +13,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     <>
       <h1 style={{ fontSize: "2rem" }}>{t.settings}</h1>
       {saved && <p className="alert alert-ok">{t.settingsSaved}</p>}
+      {error && <p className="alert alert-error">{t.actionError}</p>}
       <form action={saveSettings} className="panel form-grid">
         <div className="field full">
           <label htmlFor="hotel_name">{t.hotelName}</label>
@@ -23,6 +26,27 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <div className="field">
           <label htmlFor="phone2">{t.phone2}</label>
           <input id="phone2" name="phone2" defaultValue={s.phone2 ?? ""} />
+        </div>
+        <div className="field">
+          <label htmlFor="phone3">{t.phone3}</label>
+          <input id="phone3" name="phone3" defaultValue={s.phone3 ?? ""} />
+        </div>
+        <div className="field">
+          <label htmlFor="open_time">{t.openTime}</label>
+          <input id="open_time" name="open_time" type="time" defaultValue={s.open_time ?? "10:00"} />
+        </div>
+        <div className="field">
+          <label htmlFor="close_time">{t.closeTime}</label>
+          <input id="close_time" name="close_time" type="time" defaultValue={s.close_time ?? "19:00"} />
+        </div>
+        <div className="field">
+          <label htmlFor="breakfast_start">{t.breakfastStart}</label>
+          <input id="breakfast_start" name="breakfast_start" type="time" defaultValue={s.breakfast_start ?? ""} aria-describedby="breakfast-help" />
+        </div>
+        <div className="field">
+          <label htmlFor="breakfast_end">{t.breakfastEnd}</label>
+          <input id="breakfast_end" name="breakfast_end" type="time" defaultValue={s.breakfast_end ?? ""} aria-describedby="breakfast-help" />
+          <small id="breakfast-help" className="muted">{t.breakfastHelp}</small>
         </div>
         <div className="field">
           <label htmlFor="whatsapp">{t.whatsapp}</label>

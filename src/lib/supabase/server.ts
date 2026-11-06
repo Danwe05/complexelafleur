@@ -24,18 +24,20 @@ export async function sessionClient() {
 }
 
 /**
- * Retourne l'utilisateur depuis les cookies déjà rafraîchis par le middleware.
- * Utilise getSession() (lecture locale) pour ne pas déclencher un second refresh
- * qui causerait l'erreur "refresh_token_already_used".
+ * Retourne l'utilisateur connecté, VÉRIFIÉ auprès de Supabase Auth.
+ *
+ * getSession() se contente de lire le cookie, sans vérifier sa signature :
+ * un cookie fabriqué à la main passait. getUser() valide le jeton côté serveur.
+ * Le middleware a déjà rafraîchi le jeton s'il était proche de l'expiration,
+ * donc cet appel ne déclenche pas de second refresh.
  */
 export async function getAdminUser() {
   try {
     const client = await sessionClient();
-    const { data, error } = await client.auth.getSession();
+    const { data, error } = await client.auth.getUser();
     if (error) return null;
-    return data.session?.user ?? null;
+    return data.user ?? null;
   } catch {
     return null;
   }
 }
-

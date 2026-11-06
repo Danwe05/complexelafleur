@@ -6,6 +6,7 @@ import { useState } from "react";
 import type { Locale } from "@/lib/types";
 import type { Dictionary } from "@/lib/i18n/dictionaries";
 import { Icon } from "./Icon";
+import { displayPhone, telHref } from "@/lib/contact";
 
 const links = [
   ["", "home"],
@@ -17,9 +18,10 @@ const links = [
   ["contact", "contact"],
 ] as const;
 
-type Props = { locale: Locale; t: Dictionary["nav"]; name: string; phones: string[] };
+export type HeaderContact = { label: string; phone: string };
+type Props = { locale: Locale; t: Dictionary["nav"]; name: string; contacts: HeaderContact[] };
 
-export function SiteHeader({ locale, t, name, phones }: Props) {
+export function SiteHeader({ locale, t, name, contacts }: Props) {
   const pathname = usePathname() || `/${locale}`;
   const [open, setOpen] = useState(false);
   const rest = pathname.replace(/^\/(fr|en)/, "");
@@ -28,7 +30,8 @@ export function SiteHeader({ locale, t, name, phones }: Props) {
 
   return (
     <header className="site-header">
-      <div className="container header-row">
+      {/* maxWidth en ligne : la classe Tailwind « container » limitait l'en-tête à 1280px et coupait le bouton Réserver */}
+      <div className="container header-row" style={{ maxWidth: 1640 }}>
         <Link href={`/${locale}`} className="brand" aria-label={name}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img className="emblem" src="/images/logo-emblem.png" alt="" width={49} height={54} />
@@ -54,26 +57,29 @@ export function SiteHeader({ locale, t, name, phones }: Props) {
             <Link href={`/${other}${rest}`} hrefLang={other} lang={other}>{other.toUpperCase()}</Link>
           </span>
           <div className="nav-extra">
-            {phones[0] && (
-              <a href={`tel:${phones[0].replace(/\s/g, "")}`} className="btn btn-ghost btn-ghost-dark">
-                <Icon name="phone" size={18} /> {phones.join(" / ")}
+            {contacts.map((c) => (
+              <a key={c.phone} href={telHref(c.phone)} className="btn btn-ghost btn-ghost-dark">
+                <Icon name="phone" size={18} /> {c.label} · {displayPhone(c.phone)}
               </a>
-            )}
+            ))}
             <Link href={book} className="btn btn-gold">
               <Icon name="calendar" size={18} /> {t.book}
             </Link>
           </div>
         </nav>
 
-        {phones[0] && (
-          <a className="header-contact" href={`tel:${phones[0].replace(/\s/g, "")}`} aria-label={`${t.call} ${phones.join(", ")}`}>
+        {contacts.length > 0 && (
+          <div className="header-contact">
             <span className="dot"><Icon name="phone" size={16} /></span>
             <span>
-              {phones.map((p) => (
-                <span key={p} style={{ display: "block" }}>{p}</span>
+              {contacts.map((c) => (
+                <a key={c.phone} href={telHref(c.phone)} style={{ display: "block", color: "inherit", textDecoration: "none" }}>
+                  <span style={{ fontWeight: 500, color: "var(--muted)" }}>{c.label} </span>
+                  {displayPhone(c.phone)}
+                </a>
               ))}
             </span>
-          </a>
+          </div>
         )}
         <Link href={book} className="btn btn-gold header-cta">
           <Icon name="calendar" size={18} /> {t.book}

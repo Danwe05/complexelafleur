@@ -2,6 +2,7 @@ import { serviceClient } from "@/lib/supabase/admin";
 import { formatDate } from "@/lib/format";
 import { toggleInquiry } from "../actions";
 import { getAdminDict } from "@/lib/admin-i18n";
+import { requireAdmin } from "@/lib/admin-auth";
 
 type Inquiry = {
   id: string;
@@ -17,7 +18,9 @@ type Inquiry = {
   created_at: string;
 };
 
-export default async function InquiriesPage() {
+export default async function InquiriesPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  await requireAdmin();
+  const { error } = await searchParams;
   const { data } = await serviceClient()
     .from("inquiries")
     .select("*")
@@ -31,6 +34,7 @@ export default async function InquiriesPage() {
   return (
     <>
       <h1 style={{ fontSize: "2rem" }}>{t.inquiries}</h1>
+      {error && <p className="alert alert-error">{t.actionError}</p>}
       <p className="muted">{t.inquiriesLead}</p>
       {rows.length === 0 && <p className="panel muted">{t.noInquiries}</p>}
       {rows.map((r) => (

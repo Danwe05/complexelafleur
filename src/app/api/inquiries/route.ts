@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/admin";
 import { getSettings } from "@/lib/data";
+import { sendEmail } from "@/lib/notify";
 
 export const runtime = "nodejs";
 
@@ -43,18 +44,11 @@ export async function POST(req: Request) {
   }
 
   const settings = await getSettings();
-  if (process.env.RESEND_API_KEY && settings.manager_email) {
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: process.env.MAIL_FROM || "Complexe La Fleur <onboarding@resend.dev>",
-        to: [settings.manager_email],
-        subject: d.kind === "quote" ? `Demande de devis — ${d.name}` : d.kind === "spa" ? `Séance bien-être — ${d.name}` : `Message — ${d.name}`,
-        text: `${d.name}\n${d.phone || ""} ${d.email || ""}\n${d.eventType ? `${d.eventType} · ${d.eventDate ?? ""} · ${d.guests ?? ""} pers.\n` : ""}\n${d.message}`,
-      }),
-    }).catch(() => {});
-  }
+  await sendEmail(
+    settings.manager_email,
+    d.kind === "quote" ? `Demande de devis — ${d.name}` : d.kind === "spa" ? `Séance bien-être — ${d.name}` : `Message — ${d.name}`,
+    `${d.name}\n${d.phone || ""} ${d.email || ""}\n${d.eventType ? `${d.eventType} · ${d.eventDate ?? ""} · ${d.guests ?? ""} pers.\n` : ""}\n${d.message}`,
+  );
 
   return NextResponse.json({ ok: true });
 }

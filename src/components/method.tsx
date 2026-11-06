@@ -4,7 +4,7 @@ import type { Locale } from "@/lib/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type PaymentMethodId = "orange_money" | "mtn_momo" | "card";
+export type PaymentMethodId = "orange_money" | "mtn_momo";
 
 type MethodDef = {
   id: PaymentMethodId;
@@ -37,17 +37,6 @@ function MtnIcon() {
   );
 }
 
-function CardIcon() {
-  return (
-    <svg viewBox="0 0 48 48" fill="none" aria-hidden width="40" height="40">
-      <rect width="48" height="48" rx="24" fill="#1d2b25" />
-      <rect x="9" y="15" width="30" height="18" rx="3" stroke="#c8962a" strokeWidth="2" />
-      <rect x="9" y="21" width="30" height="5" fill="#c8962a" opacity=".7" />
-      <rect x="13" y="28" width="8" height="2" rx="1" fill="#fff" opacity=".6" />
-    </svg>
-  );
-}
-
 // ─── Données des méthodes ─────────────────────────────────────────────────────
 
 const METHODS: MethodDef[] = [
@@ -68,15 +57,6 @@ const METHODS: MethodDef[] = [
     subtitleEn: "Secure mobile payment",
     color: "#FFCC00",
     icon: <MtnIcon />,
-  },
-  {
-    id: "card",
-    labelFr: "Carte bancaire",
-    labelEn: "Credit card",
-    subtitleFr: "Visa, Mastercard acceptées",
-    subtitleEn: "Visa, Mastercard accepted",
-    color: "#c8962a",
-    icon: <CardIcon />,
   },
 ];
 
@@ -120,8 +100,8 @@ export function PaymentMethod({ locale, selected, onSelect }: Props) {
       })}
       <p className="method-note">
         {locale === "fr"
-          ? "Vous serez redirigé vers CamerPay pour finaliser le paiement en toute sécurité. Le complexe ne voit jamais votre code secret."
-          : "You'll be redirected to CamerPay to complete the payment securely. The property never sees your PIN."}
+          ? "Une demande de paiement sera envoyée sur votre téléphone : validez-la avec votre code secret Mobile Money. Le complexe ne voit jamais votre code."
+          : "A payment request will be sent to your phone: approve it with your Mobile Money PIN. The property never sees your PIN."}
       </p>
     </div>
   );

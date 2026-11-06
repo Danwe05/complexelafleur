@@ -1,13 +1,6 @@
-import type { IconName } from "@/components/Icon";
 import type { Room } from "./types";
 
-export function amenityIcon(label: string): IconName {
-  const l = label.toLowerCase();
-  if (l.includes("climat")) return "snowflake";
-  if (l.includes("wi-fi") || l.includes("wifi")) return "wifi";
-  if (l.includes("salon")) return "sofa";
-  return "check";
-}
+export { amenityIconFor as amenityIcon, amenityLabel } from "./amenities";
 
 /** Photo de la chambre : celle saisie dans l'admin, sinon /public/images/rooms/<slug>.jpg. */
 export function roomPhoto(room: Pick<Room, "image_url" | "slug">) {

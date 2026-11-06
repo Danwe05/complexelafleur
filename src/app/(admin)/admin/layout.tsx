@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "../../globals.css";
 
 export const metadata: Metadata = {
-  title: "Espace gestion — Complexe La Fleur",
+  title: "Espace gestion — Complexe La Fleur - Obala",
   robots: { index: false, follow: false },
 };
 

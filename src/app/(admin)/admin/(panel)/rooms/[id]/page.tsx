@@ -2,10 +2,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { serviceClient } from "@/lib/supabase/admin";
 import { getAdminDict } from "@/lib/admin-i18n";
+import { requireAdmin } from "@/lib/admin-auth";
 import type { Room } from "@/lib/types";
 import { RoomFormClient } from "@/components/RoomFormClient";
 
 export default async function EditRoomPage({ params }: { params: Promise<{ id: string }> }) {
+  await requireAdmin();
   const { id } = await params;
   const { lang, t } = await getAdminDict();
 

@@ -2,37 +2,56 @@ import "server-only";
 import crypto from "node:crypto";
 
 /**
- * Intégration CamerPay (Orange Money, MTN MoMo, cartes).
+ * Intégration CamerPay (Orange Money, MTN MoMo).
  * Documentation : https://camerpay.biz/docs
  *
  * Flux :
  *  1. POST /api/payment/initiate -> { transaction_uuid, status, pay_url }
- *  2. Le client est redirigé vers pay_url et choisit son opérateur.
- *  3. CamerPay appelle merchant_callback_url avec un webhook signé HMAC-SHA256.
+ *     Avec payment_method, la demande (push USSD) part directement sur le téléphone.
+ *  2. CamerPay appelle merchant_callback_url avec un webhook signé HMAC-SHA256.
+ *
+ * C'est le SEUL endroit qui appelle CamerPay (création de réservation et
+ * nouvelle tentative depuis la page de suivi passent toutes les deux ici).
  */
 
 const baseUrl = () => (process.env.CAMERPAY_BASE_URL || "https://camerpay.biz").replace(/\/$/, "");
 
+export type PaymentMethod = "orange_money" | "mtn_momo";
+
 export type InitiateInput = {
   amount: number;
+  /** Format CamerPay : 2376XXXXXXXX (sans « + »). */
   customerPhone: string;
+  paymentMethod: PaymentMethod;
   customerName?: string;
   customerEmail?: string;
   invoiceId: string;
   callbackUrl: string;
   returnUrl: string;
+  idempotencyKey?: string;
 };
 
 export type InitiateResult = {
   transactionUuid: string;
   status: string;
-  payUrl: string;
+  payUrl: string | null;
   raw: unknown;
 };
 
+export class CamerPayError extends Error {
+  constructor(
+    message: string,
+    public httpStatus: number,
+    /** Le numéro a été refusé : le client peut le corriger. */
+    public phoneRejected = false,
+  ) {
+    super(message);
+  }
+}
+
 export async function initiatePayment(input: InitiateInput): Promise<InitiateResult> {
   const token = process.env.CAMERPAY_API_TOKEN;
-  if (!token) throw new Error("CAMERPAY_API_TOKEN manquant");
+  if (!token) throw new CamerPayError("CAMERPAY_API_TOKEN manquant", 0);
 
   const res = await fetch(`${baseUrl()}/api/payment/initiate`, {
     method: "POST",
@@ -42,15 +61,17 @@ export async function initiatePayment(input: InitiateInput): Promise<InitiateRes
       Accept: "application/json",
     },
     body: JSON.stringify({
+      payment_method: input.paymentMethod,
       amount: input.amount,
       currency: "XAF",
-      // CamerPay attend le format « 237699000000 », sans le « + ».
       customer_phone: input.customerPhone.replace(/^\+/, ""),
       ...(input.customerName ? { customer_name: input.customerName.slice(0, 255) } : {}),
       ...(input.customerEmail ? { customer_email: input.customerEmail } : {}),
       merchant_invoice_id: input.invoiceId,
       merchant_callback_url: input.callbackUrl,
       merchant_return_url: input.returnUrl,
+      ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
+      source: "site_reservation",
     }),
     cache: "no-store",
   });
@@ -71,19 +92,27 @@ export async function initiatePayment(input: InitiateInput): Promise<InitiateRes
             .join(" | ")
         : "";
     const reason = [json?.message || json?.error, fieldErrors].filter(Boolean).join(" — ") || text.slice(0, 300) || `HTTP ${res.status}`;
-    console.error("CamerPay refus", res.status, {
-      sent: { amount: input.amount, customer_phone: input.customerPhone, merchant_invoice_id: input.invoiceId, callback: input.callbackUrl, return: input.returnUrl },
-      body: text.slice(0, 600),
-    });
-    throw new Error(`CamerPay HTTP ${res.status}: ${reason}`);
+    console.error("CamerPay refus", res.status, { invoice: input.invoiceId, method: input.paymentMethod, reason });
+    const phoneRejected = res.status === 422 && /phone|téléphone|numero|numéro/i.test(reason);
+    throw new CamerPayError(`CamerPay HTTP ${res.status}: ${reason}`, res.status, phoneRejected);
   }
 
   const data = (json.data && typeof json.data === "object" ? json.data : json) as Record<string, any>;
-  const payUrl: string | undefined = data.pay_url || data.redirect_url;
   const transactionUuid: string | undefined = data.transaction_uuid;
-  if (!payUrl || !transactionUuid) throw new Error("CamerPay: réponse inattendue (pay_url ou transaction_uuid absent)");
+  if (!transactionUuid) throw new CamerPayError("CamerPay: réponse inattendue (transaction_uuid absent)", res.status);
 
-  return { transactionUuid, status: String(data.status ?? "pending"), payUrl, raw: json };
+  return {
+    transactionUuid,
+    status: String(data.status ?? "pending"),
+    payUrl: data.pay_url || data.redirect_url || null,
+    raw: json,
+  };
+}
+
+/** En production, un webhook non signé n'est JAMAIS accepté, quelle que soit la variable. */
+export function unsignedAllowed() {
+  if (process.env.VERCEL_ENV === "production") return false;
+  return process.env.CAMERPAY_ALLOW_UNSIGNED === "true";
 }
 
 /**
@@ -93,11 +122,11 @@ export async function initiatePayment(input: InitiateInput): Promise<InitiateRes
  */
 export function verifyWebhook(rawBody: string, headers: Headers): boolean {
   const secret = process.env.CAMERPAY_WEBHOOK_SECRET;
-  if (!secret) return process.env.CAMERPAY_ALLOW_UNSIGNED === "true";
+  if (!secret) return unsignedAllowed();
 
   const headerName = process.env.CAMERPAY_SIGNATURE_HEADER || "x-camerpay-signature";
   const received = headers.get(headerName)?.trim().replace(/^sha256=/i, "");
-  if (!received) return process.env.CAMERPAY_ALLOW_UNSIGNED === "true";
+  if (!received) return unsignedAllowed();
 
   const hex = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
   const b64 = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");

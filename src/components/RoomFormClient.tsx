@@ -1,10 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useRef } from "react";
+import { useState, useRef, useTransition } from "react";
 import type { Room } from "@/lib/types";
 import type { AdminDict, AdminLang } from "@/lib/admin-i18n";
-import { saveRoom } from "@/app/(admin)/admin/(panel)/actions";
+import { saveRoom, createRoomPhotoUploads } from "@/app/(admin)/admin/(panel)/actions";
+import { browserClient } from "@/lib/supabase/browser";
+import { AMENITY_GROUPS, findAmenity } from "@/lib/amenities";
+import { Icon } from "@/components/Icon";
 
 type Props = { selected: Room | null; t: AdminDict; lang: AdminLang };
 
@@ -12,6 +15,9 @@ export function RoomFormClient({ selected, t, lang }: Props) {
   const roomName = (r: Room) => (lang === "en" ? r.name_en : r.name_fr) || r.name_fr;
   const router = useRouter();
   const isNew = !selected;
+  // Équipements déjà enregistrés : ceux du catalogue sont cochés (anciens libellés compris), les autres vont dans « Autres »
+  const checkedAmenities = new Set((selected?.amenities ?? []).map((v) => findAmenity(v)?.fr).filter(Boolean) as string[]);
+  const otherAmenities = (selected?.amenities ?? []).filter((v) => !findAmenity(v));
   // Photos already saved (the first one is the cover) and newly picked files (previews only).
   const [kept, setKept] = useState<string[]>(() => {
     const g = (selected?.images ?? []).filter(Boolean);
@@ -19,6 +25,58 @@ export function RoomFormClient({ selected, t, lang }: Props) {
   });
   const [fresh, setFresh] = useState<{ file: File; url: string }[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const busy = uploading || pending;
+
+  /**
+   * 1. Les nouvelles photos partent directement du navigateur vers Supabase Storage
+   *    (URL signées fournies par le serveur, réservées aux admins).
+   * 2. Le formulaire est ensuite enregistré avec uniquement les URL des photos.
+   */
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (busy) return;
+    setError(null);
+    const fd = new FormData(e.currentTarget);
+    fd.delete("gallery_files");
+
+    if (fresh.length > 0) {
+      setUploading(true);
+      try {
+        const res = await createRoomPhotoUploads(fresh.map((p) => ({ type: p.file.type, size: p.file.size })));
+        if (res.error || !res.tickets) {
+          setError(t.photoErrors[res.error ?? "upload"] ?? t.photoErrors.upload);
+          return;
+        }
+        const storage = browserClient().storage.from("room-photos");
+        for (let i = 0; i < fresh.length; i++) {
+          const ticket = res.tickets[i];
+          const { error: upErr } = await storage.uploadToSignedUrl(ticket.path, ticket.token, fresh[i].file, {
+            contentType: fresh[i].file.type,
+          });
+          if (upErr) {
+            console.error("upload failed", upErr);
+            setError(t.photoErrors.upload);
+            return;
+          }
+          fd.append("images_keep", ticket.publicUrl);
+        }
+      } catch (err) {
+        console.error(err);
+        setError(t.photoErrors.upload);
+        return;
+      } finally {
+        setUploading(false);
+      }
+    }
+
+    startTransition(async () => {
+      const res = await saveRoom(fd);
+      if (res && res.error) setError(t.photoErrors[res.error] ?? t.actionError);
+    });
+  }
 
   /** Keep the real <input type=file> in sync with the list of previews. */
   function syncInput(list: { file: File }[]) {
@@ -48,7 +106,7 @@ export function RoomFormClient({ selected, t, lang }: Props) {
   }
 
   return (
-    <form action={saveRoom} className="panel form-grid" style={{ maxWidth: 900 }}>
+    <form onSubmit={onSubmit} className="panel form-grid" style={{ maxWidth: 900 }} aria-busy={busy}>
       {selected && <input type="hidden" name="id" value={selected.id} />}
       <input type="hidden" name="lang" value={lang} />
 
@@ -89,10 +147,26 @@ export function RoomFormClient({ selected, t, lang }: Props) {
         <input id="sort_order" name="sort_order" type="number" defaultValue={selected?.sort_order ?? 0} />
       </div>
 
-      <div className="field full">
-        <label htmlFor="amenities">{t.amenities}</label>
-        <input id="amenities" name="amenities" defaultValue={selected?.amenities.join(", ")} />
-      </div>
+      <fieldset className="field full amenity-fieldset">
+        <legend>{t.amenities}</legend>
+        <span className="help">{t.amenitiesHelp}</span>
+        {AMENITY_GROUPS.map((g) => (
+          <div key={g.fr} className="amenity-group">
+            <p className="amenity-group-title">{lang === "en" ? g.en : g.fr}</p>
+            <div className="amenity-grid">
+              {g.items.map((a) => (
+                <label key={a.fr} className="amenity-option">
+                  <input type="checkbox" name="amenities" value={a.fr} defaultChecked={checkedAmenities.has(a.fr)} />
+                  <Icon name={a.icon} size={18} />
+                  <span>{lang === "en" ? a.en : a.fr}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+        <label htmlFor="amenities_other" className="amenity-other-label">{t.amenitiesOther}</label>
+        <input id="amenities_other" name="amenities_other" defaultValue={otherAmenities.join(", ")} />
+      </fieldset>
 
       {/* ── Photo gallery ── */}
       <div className="field full">
@@ -165,9 +239,10 @@ export function RoomFormClient({ selected, t, lang }: Props) {
       </label>
 
       {/* ── Actions ── */}
+      {error && <p className="alert alert-error full" role="alert">{error}</p>}
       <div className="full" style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <button className="btn btn-primary" type="submit">
-          {isNew ? t.addRoom : t.saveChanges}
+        <button className="btn btn-primary" type="submit" disabled={busy}>
+          {uploading ? t.photoUploading : isNew ? t.addRoom : t.saveChanges}
         </button>
         <button type="button" className="btn btn-ghost btn-ghost-dark" onClick={() => router.push("/admin/rooms")}>
           {t.cancel}

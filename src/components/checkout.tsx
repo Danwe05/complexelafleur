@@ -6,6 +6,7 @@ import { formatDate, formatFcfa } from "@/lib/format";
 import { Photo } from "./Photo";
 import type { Locale } from "@/lib/types";
 import { PaymentMethod } from "@/components/method";
+import { checkCmPhone } from "@/lib/cm-phone";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -236,6 +237,14 @@ function GuestForm({
     const e: Partial<Record<keyof GuestDetails, string>> = {};
     if (form.name.trim().length < 2) e.name = locale === "fr" ? "Nom requis (2 caractères min.)." : "Name required (2 chars min.).";
     if (!form.phone.trim()) e.phone = locale === "fr" ? "Numéro de téléphone requis." : "Phone number required.";
+    else if (depositPercent > 0) {
+      // Le numéro reçoit la demande de paiement : il doit être Orange Money ou MTN MoMo.
+      const c = checkCmPhone(form.phone);
+      if (!c.ok)
+        e.phone = c.reason === "unsupported"
+          ? (locale === "fr" ? "Utilisez un numéro Orange Money ou MTN MoMo." : "Please use an Orange Money or MTN MoMo number.")
+          : (locale === "fr" ? "Numéro invalide : 9 chiffres commençant par 6 (ex. 6 90 00 00 01)." : "Invalid number: 9 digits starting with 6 (e.g. 6 90 00 00 01).");
+    }
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = locale === "fr" ? "E-mail invalide." : "Invalid email.";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -357,7 +366,11 @@ function PayStep({
   t: Dictionary["book"];
   d: Dictionary;
 }) {
-  const [method, setMethod] = useState<string | null>(null);
+  // Opérateur présélectionné d'après le numéro saisi (modifiable).
+  const [method, setMethod] = useState<string | null>(() => {
+    const c = checkCmPhone(guest.phone);
+    return c.ok ? c.operator : null;
+  });
 
   return (
     <div id="step-method">
@@ -507,7 +520,7 @@ export function Checkout({
     return { total, deposit, balance: total - deposit };
   }, [selected, nights, depositPercent]);
 
-  async function submit(_method: string) {
+  async function submit(method: string) {
     if (!selected || !money) return;
     setSubmitting(true);
     setError(null);
@@ -525,6 +538,7 @@ export function Checkout({
           email: guest.email || "",
           notes: guest.notes || "",
           locale,
+          ...(method === "orange_money" || method === "mtn_momo" ? { method } : {}),
         }),
       });
       const json = await res.json().catch(() => ({}));

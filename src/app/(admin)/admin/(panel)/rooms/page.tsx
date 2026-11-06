@@ -5,12 +5,14 @@ import { formatFcfa } from "@/lib/format";
 import type { Room } from "@/lib/types";
 import { DeleteRoomButton } from "@/components/DeleteRoomButton";
 import { toggleRoomActive } from "../actions";
+import { requireAdmin } from "@/lib/admin-auth";
 
 export default async function AdminRoomsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ saved?: string; deleted?: string; hidden?: string }>;
+  searchParams: Promise<{ saved?: string; deleted?: string; hidden?: string; error?: string }>;
 }) {
+  await requireAdmin();
   const sp = await searchParams;
   const { lang, t } = await getAdminDict();
   const { data } = await serviceClient().from("rooms").select("*").order("sort_order").order("price_per_night");
@@ -27,6 +29,7 @@ export default async function AdminRoomsPage({
       {sp.saved && <p className="alert alert-ok">{t.roomsSaved}</p>}
       {sp.deleted && <p className="alert alert-ok">{t.roomsDeleted}</p>}
       {sp.hidden && <p className="alert alert-error">{t.roomsHidden}</p>}
+      {sp.error && <p className="alert alert-error">{t.actionError}</p>}
 
       <div className="panel table-wrap">
         {rooms.length === 0 ? (

@@ -1,4 +1,4 @@
-# Complexe Lafleur Obala — site web et réservation
+# Complexe La Fleur - Obala — site web et réservation
 
 Site bilingue (français / anglais) pour un hôtel avec restaurant, bar, piscine, jacuzzi, hammam et sauna, conçu d'après la maquette fournie (logo, palette vert et or).
 Réservation en ligne, paiement de l'acompte par Orange Money ou MTN MoMo via CamerPay, et espace de gestion pour la réception.
@@ -17,14 +17,15 @@ Réservation en ligne, paiement de l'acompte par Orange Money ou MTN MoMo via Ca
 ### 1. Supabase
 
 1. Créez un projet sur [supabase.com](https://supabase.com).
-2. Dans **SQL Editor**, exécutez `supabase/migrations/0001_init.sql`, puis `supabase/seed.sql` (chambres d'exemple, à modifier ensuite depuis l'admin).
-3. Dans **Authentication > Users**, créez le compte de la réception (e-mail + mot de passe).
-4. Donnez-lui l'accès admin, dans le SQL Editor :
+2. Dans **SQL Editor**, exécutez dans l'ordre `supabase/migrations/0001_init.sql`, `0002_room_images.sql`, `0003_fix_booking_reference.sql`, `0004_fixes.sql`, `0005_accueil_contacts.sql`, puis `supabase/seed.sql` (chambres d'exemple, à modifier ensuite depuis l'admin).
+3. Dans **Authentication > Sign In / Providers**, désactivez **Allow new users to sign up** : seul le compte de la réception doit exister.
+4. Dans **Authentication > Users**, créez le compte de la réception (e-mail + mot de passe).
+5. Donnez-lui l'accès admin, dans le SQL Editor :
    ```sql
    insert into public.admins (user_id)
    select id from auth.users where email = 'reception@exemple.com';
    ```
-5. Récupérez l'URL du projet, la clé `anon` et la clé `service_role` (Project Settings > API).
+6. Récupérez l'URL du projet, la clé `anon` et la clé `service_role` (Project Settings > API).
 
 ### 2. Variables d'environnement
 
@@ -41,6 +42,12 @@ npm install
 npm run dev        # http://localhost:3000
 ```
 
+## Mise à jour d'un projet existant
+
+Exécutez `supabase/migrations/0004_fixes.sql` dans le SQL Editor. Elle ajoute les colonnes `updated_at` manquantes, le bucket de photos `room-photos`, la fonction `mark_booking_paid` (paiement sans double réservation) et des références de réservation plus longues.
+
+Puis `supabase/migrations/0005_accueil_contacts.sql` : nom « Complexe La Fleur - Obala », numéros (réception 6 20 21 18 22, réservations 6 51 60 13 55 et 6 59 67 61 97, WhatsApp 6 51 60 13 55) et horaires 10h – 19h. Tout se modifie ensuite dans l'admin > Paramètres.
+
 ## CamerPay
 
 1. Créez un compte sur [camerpay.biz](https://camerpay.biz) et générez un jeton API : `https://camerpay.biz/client/api`.
@@ -48,6 +55,9 @@ npm run dev        # http://localhost:3000
 3. Dans le sandbox, la page de paiement propose de simuler un succès, un échec ou un retour sans paiement.
 4. Le site reçoit le résultat sur `POST /api/payments/camerpay/webhook` (signé HMAC-SHA256). Cette URL doit être **publique**. En local, utilisez un tunnel (ngrok, Cloudflare Tunnel) et mettez son adresse dans `NEXT_PUBLIC_SITE_URL`.
 5. Renseignez `CAMERPAY_WEBHOOK_SECRET` avec le secret de signature des webhooks.
+6. En production Vercel, un webhook non signé est **toujours** refusé, même avec `CAMERPAY_ALLOW_UNSIGNED=true`. Si les paiements restent « en cours », regardez les logs de `/api/payments/camerpay/webhook` : ils listent les en-têtes reçus, mettez le bon nom dans `CAMERPAY_SIGNATURE_HEADER`.
+
+Le client choisit Orange Money ou MTN MoMo à l'étape paiement : la demande arrive directement sur son téléphone. S'il ne la reçoit pas, la page de suivi lui permet de changer de numéro ou d'opérateur.
 
 ### Points à confirmer avec la documentation CamerPay
 
@@ -73,6 +83,8 @@ Si l'acompte est réglé à **0 %** dans les paramètres, il n'y a pas de paieme
 Les remboursements se font à la main, depuis votre compte CamerPay.
 
 ## E-mails (facultatif)
+
+Vérifiez d'abord votre domaine dans Resend (`complexelafleur.com`, enregistrements DNS chez LWS) et mettez une adresse de ce domaine dans `MAIL_FROM`. Resend refuse d'envoyer depuis une adresse Gmail : le site ignore alors les envois et l'écrit dans les logs.
 
 Avec `RESEND_API_KEY` et une adresse « reçoit les alertes » dans les paramètres, le gérant reçoit un e-mail à chaque réservation prête à valider, et le client reçoit la confirmation ou le refus. Sans clé, les e-mails sont simplement ignorés.
 

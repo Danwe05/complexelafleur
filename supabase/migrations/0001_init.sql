@@ -8,7 +8,7 @@ create extension if not exists pgcrypto;
 -- ------------------------------------------------------------------
 create table if not exists public.settings (
   id int primary key default 1 check (id = 1),
-  hotel_name text not null default 'Complexe Lafleur Obala',
+  hotel_name text not null default 'Complexe La Fleur - Obala',
   phone text default '+237 694 744 321',
   phone2 text default '+237 655 243 107',
   whatsapp text default '',

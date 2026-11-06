@@ -19,7 +19,12 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     <>
       <header className="admin-bar">
         <div className="container">
-          <span className="brand">{t.brand}</span>
+          <Link href="/admin" className="brand" aria-label={t.brand}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/images/logo-emblem.png" alt="" width={33} height={36} />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/images/logo-wordmark.png" alt="" width={140} height={20} />
+          </Link>
           <nav style={{ display: "flex", gap: 20, flexWrap: "wrap" }} aria-label={t.navLabel}>
             <Link href="/admin">{t.bookings}</Link>
             <Link href="/admin/rooms">{t.rooms}</Link>

@@ -30,6 +30,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <button className="btn btn-ghost btn-ghost-dark btn-sm" type="submit" name="lang" value="fr" aria-pressed={lang === "fr"} style={{ opacity: lang === "fr" ? 1 : 0.6 }}>FR</button>
         <button className="btn btn-ghost btn-ghost-dark btn-sm" type="submit" name="lang" value="en" aria-pressed={lang === "en"} style={{ opacity: lang === "en" ? 1 : 0.6 }}>EN</button>
       </form>
+      <div className="login-logo">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/images/logo.png" alt={t.brand} width={200} height={110} />
+      </div>
       <h1 style={{ fontSize: "1.8rem" }}>{t.loginTitle}</h1>
       <p className="muted">{t.loginLead}</p>
       {error === "credentials" && <p className="alert alert-error">{t.loginBad}</p>}

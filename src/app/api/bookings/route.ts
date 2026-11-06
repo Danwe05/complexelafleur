@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/admin";
 import { getSettings } from "@/lib/data";
-import { initiatePayment } from "@/lib/camerpay";
-import { normalizeCmPhone } from "@/lib/format";
+import { CamerPayError } from "@/lib/camerpay";
+import { checkCmPhone } from "@/lib/cm-phone";
+import { siteUrl, startDepositPayment } from "@/lib/payments";
 import { notifyManagerNewBooking, notifyGuestBookingReceived } from "@/lib/notify";
 import type { Booking } from "@/lib/types";
 
@@ -19,6 +20,8 @@ const schema = z.object({
   email: z.string().trim().email().max(160).optional().or(z.literal("")),
   notes: z.string().trim().max(1000).optional(),
   locale: z.enum(["fr", "en"]).default("fr"),
+  /** Opérateur choisi à l'étape paiement (obligatoire si un acompte est demandé). */
+  method: z.enum(["orange_money", "mtn_momo"]).optional(),
 });
 
 const knownErrors: Record<string, { status: number; code: string }> = {
@@ -29,6 +32,11 @@ const knownErrors: Record<string, { status: number; code: string }> = {
   unavailable: { status: 409, code: "unavailable" },
 };
 
+async function roomNameFor(db: ReturnType<typeof serviceClient>, b: Booking) {
+  const { data } = await db.from("rooms").select("name_fr, name_en").eq("id", b.room_id).single();
+  return (b.locale === "en" ? data?.name_en : data?.name_fr) ?? data?.name_fr ?? "";
+}
+
 export async function POST(req: Request) {
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
@@ -36,13 +44,18 @@ export async function POST(req: Request) {
 
   const settings = await getSettings();
   const db = serviceClient();
-
   const needsPayment = settings.deposit_percent > 0;
-  const cmPhone = normalizeCmPhone(input.phone);
-  if (needsPayment && !cmPhone) {
-    return NextResponse.json({ error: "invalid_phone" }, { status: 400 });
+
+  // Le numéro sert au paiement Mobile Money : il doit être Orange ou MTN.
+  const phoneCheck = checkCmPhone(input.phone);
+  if (needsPayment) {
+    if (!phoneCheck.ok) {
+      const code = phoneCheck.reason === "unsupported" ? "unsupported_operator" : "invalid_phone";
+      return NextResponse.json({ error: code }, { status: 400 });
+    }
+    if (!input.method) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
   }
-  const phone = cmPhone ?? input.phone;
+  const phone = phoneCheck.ok ? `+${phoneCheck.camerpay}` : input.phone;
 
   const { data, error } = await db.rpc("create_booking", {
     p_room: input.roomId,
@@ -66,13 +79,11 @@ export async function POST(req: Request) {
   }
 
   const booking = data as Booking;
-  const site = (process.env.NEXT_PUBLIC_SITE_URL || new URL(req.url).origin).replace(/\/$/, "");
   const bookingPage = `/${input.locale}/booking/${booking.reference}`;
 
   // Pas d'acompte demandé : la réservation attend directement la validation de la réception.
-  if (!needsPayment || booking.deposit_amount <= 0) {
-    const { data: room } = await db.from("rooms").select("name_fr").eq("id", booking.room_id).single();
-    const roomName = room?.name_fr ?? "";
+  if (!needsPayment || booking.deposit_amount <= 0 || !phoneCheck.ok || !input.method) {
+    const roomName = await roomNameFor(db, booking);
     await Promise.all([
       notifyManagerNewBooking(booking, roomName, settings),
       notifyGuestBookingReceived(booking, roomName, settings),
@@ -81,48 +92,38 @@ export async function POST(req: Request) {
   }
 
   try {
-    const payment = await initiatePayment({
-      amount: booking.deposit_amount,
-      customerPhone: phone,
-      customerName: booking.guest_name,
-      customerEmail: booking.guest_email || undefined,
-      invoiceId: booking.reference,
-      callbackUrl: `${site}/api/payments/camerpay/webhook`,
-      returnUrl: `${site}${bookingPage}`,
-    });
-
-    await db.from("payments").insert({
-      booking_id: booking.id,
-      transaction_uuid: payment.transactionUuid,
-      amount: booking.deposit_amount,
-      status: payment.status,
-      pay_url: payment.payUrl,
-      raw: payment.raw as object,
-    });
-
-    // Le push USSD est déclenché dès l'appel initiate : on redirige
-    // directement vers la page de statut. La pay_url est conservée en base
-    // comme lien de secours (bouton "Reprendre le paiement").
+    // La demande de paiement (push USSD) part sur le téléphone avec l'opérateur choisi.
+    await startDepositPayment(db, booking, phoneCheck, input.method, siteUrl(req));
     return NextResponse.json({ reference: booking.reference, redirectUrl: bookingPage });
   } catch (err) {
+    // Numéro refusé par l'opérateur : la réservation reste bloquée, et la page de suivi
+    // demande un autre numéro (aucun paiement enregistré => formulaire affiché).
+    if (err instanceof CamerPayError && err.phoneRejected) {
+      return NextResponse.json({ reference: booking.reference, redirectUrl: bookingPage });
+    }
+
     console.error("payment initiation failed", err);
-    // Payment gateway unavailable: downgrade to manual pending instead of cancelling.
-    // The reception will contact the guest to arrange payment.
-    // Still notify the guest so they have their reference number.
-    const { data: room } = await db.from("rooms").select("name_fr").eq("id", booking.room_id).single();
-    void notifyGuestBookingReceived(booking, room?.name_fr ?? "", settings);
-    await db
+    // Passerelle indisponible : on bascule en validation manuelle au lieu d'annuler.
+    // La réception contactera le client pour l'acompte ; les deux sont prévenus.
+    const { data: updated } = await db
       .from("bookings")
       .update({
         status: "pending",
         deposit_amount: 0,
         payment_status: "none",
         hold_expires_at: null,
-        admin_note: `Paiement en ligne indisponible – à régler à l'accueil. Erreur : ${(err as Error).message}`,
+        admin_note: `Paiement en ligne indisponible – acompte à régler à l'accueil. Erreur : ${(err as Error).message}`.slice(0, 1000),
         updated_at: new Date().toISOString(),
       })
-      .eq("id", booking.id);
-    // Still redirect to the booking confirmation page
+      .eq("id", booking.id)
+      .select("*")
+      .single();
+    const b = (updated as Booking | null) ?? booking;
+    const roomName = await roomNameFor(db, b);
+    await Promise.all([
+      notifyManagerNewBooking(b, roomName, settings),
+      notifyGuestBookingReceived(b, roomName, settings),
+    ]);
     return NextResponse.json({ reference: booking.reference, redirectUrl: bookingPage });
   }
 }

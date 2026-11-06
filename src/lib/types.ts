@@ -5,6 +5,8 @@ export type Settings = {
   hotel_name: string;
   phone: string | null;
   phone2: string | null;
+  /** Deuxième numéro de réservation */
+  phone3: string | null;
   whatsapp: string | null;
   email: string | null;
   address: string | null;
@@ -14,6 +16,12 @@ export type Settings = {
   youtube_url: string | null;
   checkin_time: string;
   checkout_time: string;
+  /** Horaires d'ouverture du complexe, « HH:MM » */
+  open_time: string;
+  close_time: string;
+  /** Petit-déjeuner, « HH:MM » ; vide = service masqué */
+  breakfast_start: string | null;
+  breakfast_end: string | null;
   deposit_percent: number;
   hold_hours: number;
   manager_email: string | null;

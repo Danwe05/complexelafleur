@@ -14,6 +14,9 @@
   --gold-btn-dark: #7a5409;
   --gold-light: #e8c766;
   --gold-text: #a37410;
+  /* Vert WhatsApp foncé : reconnaissable et lisible en blanc (contraste ≥ 4.5:1) */
+  --wa: #0d7a4f;
+  --wa-dark: #095c3b;
   --paper: #f6f7f3;
   --white: #ffffff;
   --text: #1d2b25;
@@ -200,6 +203,85 @@ img {
   background: var(--green);
 }
 
+/* WhatsApp : action principale de réservation */
+.btn-wa {
+  background: var(--wa);
+  color: #fff;
+}
+
+.btn-wa:hover {
+  background: var(--wa-dark);
+  color: #fff;
+}
+
+.btn-outline-gold {
+  background: #fff;
+  color: var(--gold-btn);
+  border-color: var(--gold-btn);
+}
+
+.btn-outline-gold:hover {
+  background: #fbf5e6;
+  color: var(--gold-btn-dark);
+  border-color: var(--gold-btn-dark);
+}
+
+/* Bouton WhatsApp flottant (toutes les pages du site) */
+.wa-float {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 22px 0 18px;
+  border-radius: 999px;
+  background: var(--wa);
+  color: #fff;
+  font: 600 0.95rem var(--body);
+  text-decoration: none;
+  box-shadow: 0 10px 28px -8px rgba(6, 30, 20, 0.55);
+  transition: background-color 0.15s, transform 0.15s;
+}
+
+.wa-float:hover {
+  background: var(--wa-dark);
+  color: #fff;
+  transform: translateY(-2px);
+}
+
+.wa-float:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+  .wa-float {
+    right: 14px;
+    bottom: 14px;
+    padding: 0;
+    width: 58px;
+    justify-content: center;
+  }
+
+  .wa-float .wa-float-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-float:hover {
+    transform: none;
+  }
+}
+
 .btn-ghost {
   background: transparent;
   color: inherit;
@@ -245,7 +327,26 @@ img {
 }
 
 .site-header .container {
-  max-width: 1400px;
+  max-width: 1640px;
+}
+
+/* Écrans moyens : on resserre la navigation pour que « Réserver maintenant » tienne */
+@media (max-width: 1560px) {
+  .header-row {
+    gap: 16px;
+  }
+
+  .nav {
+    gap: 13px;
+  }
+
+  .nav a {
+    font-size: 0.86rem;
+  }
+
+  .header-cta {
+    padding: 0 16px;
+  }
 }
 
 .header-row {
@@ -364,13 +465,13 @@ img {
   display: none;
 }
 
-@media (max-width: 1480px) {
+@media (max-width: 1720px) {
   .header-contact {
     display: none;
   }
 }
 
-@media (max-width: 1360px) {
+@media (max-width: 1400px) {
   .menu-toggle {
     display: inline-block;
   }
@@ -587,6 +688,19 @@ img {
   font-size: 0.95rem;
 }
 
+/* Avec WhatsApp : les 3 champs sur une ligne, les 2 boutons dessous (WhatsApp plus large) */
+.search-card.has-wa {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.search-card.has-wa .btn-wa {
+  grid-column: 1 / span 2;
+}
+
+.search-card.has-wa .btn-outline-gold {
+  grid-column: 3 / span 1;
+}
+
 @media (max-width: 900px) {
   .hero {
     padding: 56px 0 110px;
@@ -600,11 +714,28 @@ img {
   .search-card .btn {
     grid-column: 1 / -1;
   }
+
+  .search-card.has-wa {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .search-card.has-wa .btn,
+  .search-card.has-wa .btn-wa,
+  .search-card.has-wa .btn-outline-gold {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 520px) {
-  .search-card {
+  .search-card,
+  .search-card.has-wa {
     grid-template-columns: 1fr;
+  }
+
+  .search-card.has-wa .btn,
+  .search-card.has-wa .btn-wa,
+  .search-card.has-wa .btn-outline-gold {
+    grid-column: 1 / -1;
   }
 }
 
@@ -1345,6 +1476,108 @@ img {
   font-weight: 600;
   font-size: 0.9rem;
   color: var(--green);
+}
+
+/* Équipements à cocher (admin > chambre) */
+.amenity-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.amenity-fieldset legend {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--green);
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.amenity-group {
+  margin-top: 14px;
+}
+
+.amenity-group-title {
+  margin: 0 0 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.amenity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+/* Mobile : 2 colonnes pour que la liste reste courte */
+@media (max-width: 560px) {
+  .amenity-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .amenity-option {
+    gap: 7px;
+    padding: 8px 9px;
+    font-size: 0.8rem;
+  }
+
+  .amenity-option svg {
+    display: none;
+  }
+}
+
+.amenity-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.amenity-option:hover {
+  border-color: var(--gold);
+}
+
+.amenity-option svg {
+  color: var(--gold-text);
+  flex: none;
+}
+
+.amenity-option input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--green);
+}
+
+.amenity-option:has(input:checked) {
+  border-color: var(--green);
+  background: #eef4ef;
+}
+
+.amenity-option:has(input:focus-visible) {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.amenity-other-label {
+  display: block;
+  margin-top: 16px;
+  margin-bottom: 6px;
 }
 
 .field .help {
@@ -2648,12 +2881,52 @@ textarea:focus-visible {
   color: #fff;
 }
 
+/* Logo dans une pastille claire : ses verts et ors restent lisibles sur le fond vert */
 .admin-bar .brand {
-  color: #fff;
-  font-family: var(--display);
-  font-weight: 700;
-  font-size: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin-right: auto;
+  padding: 5px 14px 5px 8px;
+  background: #fff;
+  border-radius: 999px;
+  flex: none;
+}
+
+.admin-bar .brand img {
+  display: block;
+  height: auto;
+}
+
+.admin-bar .container {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+/* Sur mobile la barre passe en colonne : la pastille garde sa largeur */
+.admin-bar .container > .brand {
+  align-self: flex-start;
+}
+
+.admin-bar .brand img:first-child {
+  height: 36px;
+  width: auto;
+}
+
+.admin-bar .brand img:last-child {
+  height: 20px;
+  width: auto;
+}
+
+.login-logo {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0 20px;
+}
+
+.login-logo img {
+  height: 110px;
+  width: auto;
 }
 
 .admin-bar nav {
@@ -2743,19 +3016,10 @@ th {
   color: #fff;
 }
 
+/* (couleurs .btn-wa définies plus haut : vert WhatsApp foncé, lisible en blanc) */
 .btn-wa {
-  background: #25d366;
-  color: #fff;
   font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   white-space: nowrap;
-}
-
-.btn-wa:hover {
-  background: #1ebe5d;
-  color: #fff;
 }
 
 /* WhatsApp notify banner */

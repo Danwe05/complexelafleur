@@ -6,9 +6,27 @@ import { serviceClient } from "@/lib/supabase/admin";
 import { formatDate, formatFcfa } from "@/lib/format";
 import type { Booking } from "@/lib/types";
 import { PaymentPhoneForm } from "@/components/PaymentPhoneForm";
-import { checkCmPhone, formatCmLocal, type Operator } from "@/lib/cm-phone";
+import { checkCmPhone, type Operator } from "@/lib/cm-phone";
 
 export const metadata: Metadata = { robots: { index: false } };
+
+// Cette page est accessible à quiconque connaît la référence : on n'y affiche
+// jamais les coordonnées complètes du client.
+function maskPhone(p: string) {
+  const d = p.replace(/\D/g, "");
+  const local = d.startsWith("237") && d.length === 12 ? d.slice(3) : d;
+  if (local.length < 4) return "••••";
+  return `${local.length === 9 ? "+237 " : ""}${local[0]}•• •• •• ${local.slice(-2)}`;
+}
+function maskEmail(e: string) {
+  const [u, dom] = e.split("@");
+  if (!dom) return "••••";
+  return `${u.slice(0, 1)}•••@${dom}`;
+}
+function maskName(n: string) {
+  const parts = n.trim().split(/\s+/);
+  return parts.length > 1 ? `${parts[0]} ${parts.slice(1).map((x) => x[0] + ".").join(" ")}` : parts[0];
+}
 
 // ─── Icônes de statut ────────────────────────────────────────────────────────
 
@@ -169,7 +187,7 @@ export default async function BookingStatusPage({
     payUrl = payment?.pay_url ?? null;
     const req = (payment?.raw as { request?: { customer_phone?: string; payment_method?: Operator } } | null)?.request;
     const used = checkCmPhone(req?.customer_phone ?? "");
-    paidFrom = used.ok ? `+237 ${formatCmLocal(used.local)}` : null;
+    paidFrom = used.ok ? maskPhone(`+237${used.local}`) : null;
     lastMethod = req?.payment_method ?? null;
     // On demande le numéro tant qu'aucune demande n'est partie, après un échec,
     // ou quand le client veut changer de numéro.
@@ -244,7 +262,6 @@ export default async function BookingStatusPage({
                 locale={locale}
                 reference={booking.reference}
                 amountLabel={formatFcfa(booking.deposit_amount, locale)}
-                defaultPhone={paidFrom ?? booking.guest_phone}
                 defaultMethod={lastMethod}
               />
             )}
@@ -266,8 +283,8 @@ export default async function BookingStatusPage({
                   </strong>
                   <p className="ussd-desc">
                     {locale === "fr"
-                      ? `Un message a été envoyé au ${paidFrom ?? booking.guest_phone}. Entrez votre code PIN Mobile Money pour valider l'acompte de ${formatFcfa(booking.deposit_amount, locale)}.`
-                      : `A prompt was sent to ${paidFrom ?? booking.guest_phone}. Enter your Mobile Money PIN to confirm the deposit of ${formatFcfa(booking.deposit_amount, locale)}.`}
+                      ? `Un message a été envoyé au ${paidFrom ?? maskPhone(booking.guest_phone)}. Entrez votre code PIN Mobile Money pour valider l'acompte de ${formatFcfa(booking.deposit_amount, locale)}.`
+                      : `A prompt was sent to ${paidFrom ?? maskPhone(booking.guest_phone)}. Enter your Mobile Money PIN to confirm the deposit of ${formatFcfa(booking.deposit_amount, locale)}.`}
                   </p>
                   <p className="ussd-fallback">
                     {locale === "fr" ? "Vous n'avez rien reçu ? " : "Didn't receive anything? "}
@@ -400,17 +417,17 @@ export default async function BookingStatusPage({
             <dl className="status-dl">
               <div>
                 <dt>{locale === "fr" ? "Nom" : "Name"}</dt>
-                <dd>{booking.guest_name}</dd>
+                <dd>{maskName(booking.guest_name)}</dd>
               </div>
               {booking.guest_email && (
                 <div>
                   <dt>{locale === "fr" ? "E-mail" : "Email"}</dt>
-                  <dd>{booking.guest_email}</dd>
+                  <dd>{maskEmail(booking.guest_email)}</dd>
                 </div>
               )}
               <div>
                 <dt>{locale === "fr" ? "Téléphone" : "Phone"}</dt>
-                <dd>{booking.guest_phone}</dd>
+                <dd>{maskPhone(booking.guest_phone)}</dd>
               </div>
             </dl>
 
