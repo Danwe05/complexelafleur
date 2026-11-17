@@ -3453,3 +3453,9 @@ th {
 }
 
 } /* fin @layer components */
+/* ---------- Dining photos ---------- */
+.dining-photo {
+  aspect-ratio: 4 / 3;
+  border-radius: 12px;
+  margin-bottom: 24px;
+}

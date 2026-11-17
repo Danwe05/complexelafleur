@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { Photo } from "@/components/Photo";
 import { dictionaries, isLocale } from "@/lib/i18n/dictionaries";
 import { getSettings } from "@/lib/data";
 
@@ -25,10 +26,12 @@ export default async function DiningPage({ params }: { params: Promise<{ locale:
       <section className="section">
         <div className="container split">
           <div>
+            <Photo src="/images/restaurant.jpg" alt={t.restaurant} tone="warm" icon="utensils" className="dining-photo" />
             <h2>{t.restaurant}</h2>
             <p>{t.restaurantText}</p>
           </div>
           <div>
+            <Photo src="/images/bar.jpg" alt={t.bar} tone="gold" icon="coffee" className="dining-photo" />
             <h2>{t.bar}</h2>
             <p>{t.barText}</p>
           </div>
